@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>Laytime SOF 智能提取 (支持多图)</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; }
+        #drop-zone { 
+            border: 2px dashed #ccc; padding: 30px; text-align: center; 
+            background: #f9f9f9; margin-bottom: 10px; border-radius: 8px;
+        }
+        /* 图片画廊样式：让多张图横向排列 */
+        #gallery { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .preview-img { max-height: 150px; border: 1px solid #ddd; border-radius: 4px; padding: 2px; }
+        button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 5px; margin-right: 10px;}
+        .btn-primary { background: #007bff; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        pre { background: #f4f4f4; padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word;}
+    </style>
+</head>
+<body>
+    <h2>上传或粘贴 SOF 截图</h2>
+    
+    <div id="drop-zone">
+        <p>请在此处按 <b>Ctrl + V</b> 粘贴 SOF 截图（支持多次粘贴多张）</p>
+        <textarea id="sofInput" rows="3" style="width: 100%;" placeholder="(可选) 在这里输入额外说明，比如：这是XX船的SOF..."></textarea>
+        
+        <div id="gallery"></div>
+    </div>
+
+    <button class="btn-primary" onclick="extractData()">开始提取多页数据</button>
+    <button class="btn-danger" onclick="clearImages()">清空所有图片</button>
+    
+    <h3>提取结果 (JSON格式)：</h3>
+    <pre id="output">等待操作...</pre>
+
+    <script>
+        // 这是一个数组（篮子），用来装你粘贴的所有图片
+        let imageList = []; 
+
+        window.addEventListener('paste', e => {
+            const items = e.clipboardData.items;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    const file = items[i].getAsFile();
+                    const mimeType = file.type;
+                    
+                    const reader = new FileReader();
+                    reader.onload = function(event) {
+                        const imgData = event.target.result;
+                        const base64Str = imgData.split(',')[1]; 
+                        
+                        // 1. 把新图片的数据放进篮子里
+                        imageList.push({
+                            mimeType: mimeType,
+                            base64: base64Str
+                        });
+
+                        // 2. 在网页上显示出这张新图片
+                        const imgElement = document.createElement('img');
+                        imgElement.src = imgData;
+                        imgElement.className = 'preview-img';
+                        document.getElementById('gallery').appendChild(imgElement);
+                    };
+                    reader.readAsDataURL(file);
+                    // 注意：这里我去掉了 break，这样你一次性复制多张图也能全部读取
+                }
+            }
+        });
+
+        // 清空图片的函数
+        function clearImages() {
+            imageList = []; // 清空篮子
+            document.getElementById('gallery').innerHTML = ''; // 清空画面
+            document.getElementById('output').innerText = "已清空，等待新操作...";
+        }
+
+        async function extractData() {
+            const text = document.getElementById('sofInput').value;
+            const outputEl = document.getElementById('output');
+            
+            if (imageList.length === 0 && !text) {
+                alert("请至少粘贴一张 SOF 图片或输入文字！");
+                return;
+            }
+
+            outputEl.innerText = `正在让 Gemini 阅读 ${imageList.length} 张图片，请稍候...`;
+
+            try {
+                // 注意这里：我们将整个 imageList 数组发给后端
+                const response = await fetch('/api/get-laytime', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        text: text,
+                        images: imageList // 发送多图数组
+                    })
+                });
+
+                const data = await response.json();
+                
+                if(data.error) {
+                    outputEl.innerText = "错误: " + data.error;
+                } else {
+                    outputEl.innerText = data.result;
+                }
+                
+            } catch (error) {
+                outputEl.innerText = "发生网络错误！请确认后端已正确部署。";
+            }
+        }
+    </script>
+</body>
+</html>
