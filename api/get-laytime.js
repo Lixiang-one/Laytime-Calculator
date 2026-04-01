@@ -31,7 +31,8 @@ export default async function handler(req, res) {
     }
 
     // 呼叫 Gemini 1.5 Flash 模型
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // 方案A：加上 -latest 后缀
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
     
     const response = await fetch(geminiUrl, {
       method: 'POST',
