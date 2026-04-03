@@ -1,113 +1,222 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Laytime SOF 智能提取 (支持多图)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOF 智能提取 - 卸港版</title>
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; }
-        #drop-zone { 
-            border: 2px dashed #ccc; padding: 30px; text-align: center; 
-            background: #f9f9f9; margin-bottom: 10px; border-radius: 8px;
-        }
-        /* 图片画廊样式：让多张图横向排列 */
-        #gallery { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
-        .preview-img { max-height: 150px; border: 1px solid #ddd; border-radius: 4px; padding: 2px; }
-        button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 5px; margin-right: 10px;}
-        .btn-primary { background: #007bff; color: white; }
-        .btn-danger { background: #dc3545; color: white; }
-        pre { background: #f4f4f4; padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word;}
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 20px auto; padding: 20px; color: #333; }
+        .header { border-bottom: 2px solid #0056b3; padding-bottom: 10px; margin-bottom: 20px; }
+        .controls { background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef; }
+        .form-group { margin-bottom: 15px; }
+        .radio-group { font-weight: bold; color: #0056b3; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px dashed #ccc; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
+        th { background: #e9ecef; padding: 10px; text-align: left; border: 1px solid #ced4da; }
+        td { border: 1px solid #ced4da; padding: 0; }
+        input[type="text"] { width: 100%; box-sizing: border-box; border: none; padding: 10px; background: transparent; }
+        input[type="text"]:focus { outline: 2px solid #007bff; background: #fff; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 15px; font-weight: bold;}
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #copyBtn { background: #28a745; display: none; margin-top: 20px; width: 100%; font-size: 16px; }
+        #copyBtn:hover { background: #218838; }
+        .badge { display: inline-block; padding: 2px 6px; font-size: 12px; background: #6c757d; color: white; border-radius: 4px; margin-left: 5px; }
     </style>
 </head>
 <body>
-    <h2>上传或粘贴 SOF 截图</h2>
-    
-    <div id="drop-zone">
-        <p>请在此处按 <b>Ctrl + V</b> 粘贴 SOF 截图（支持多次粘贴多张）</p>
-        <textarea id="sofInput" rows="3" style="width: 100%;" placeholder="(可选) 在这里输入额外说明，比如：这是XX船的SOF..."></textarea>
-        
-        <div id="gallery"></div>
+
+    <div class="header">
+        <h2>🚢 SOF Laytime 智能提取助手</h2>
     </div>
 
-    <button class="btn-primary" onclick="extractData()">开始提取多页数据</button>
-    <button class="btn-danger" onclick="clearImages()">清空所有图片</button>
-    
-    <h3>提取结果 (JSON格式)：</h3>
-    <pre id="output">等待操作...</pre>
+    <div class="controls">
+        <div class="form-group">
+            <input type="file" id="imageInput" accept="image/*">
+        </div>
+
+        <div class="radio-group">
+            <label><input type="radio" name="portType" value="loading"> 🔵 装港 (Loading)</label>
+            <label style="margin-left: 20px;"><input type="radio" name="portType" value="discharging" checked> 🔴 卸港 (Discharging)</label>
+        </div>
+        
+        <div class="form-group" id="rulesContainer">
+            <p style="margin: 0 0 10px 0; font-weight: bold;">附加计算规则：</p>
+            <label><input type="checkbox" id="ruleShifting" checked> 移泊 (SHIFTING) 计为 0%</label><br>
+            <label><input type="checkbox" id="ruleSurvey" checked> 初水尺 (DRAFT SURVEY) 计为 0%</label><br>
+            <label><input type="checkbox" id="ruleWeather" checked> 坏天气 (BAD WEATHER) 计为 0%</label><br>
+            <label><input type="checkbox" id="ruleTT" checked> 自动推算 12 HOURS TT <span class="badge">JS 硬逻辑</span></label>
+        </div>
+        
+        <button onclick="processImage()" id="submitBtn">🤖 开始提取分析</button>
+        <span id="loading" style="display: none; margin-left: 10px; color: #007bff; font-weight: bold;">AI 正在看图，请稍候...</span>
+    </div>
+
+    <table id="resultTable" style="display: none;">
+        <thead>
+            <tr>
+                <th style="width: 8%; display: none;">Date</th> 
+                <th style="width: 20%;">FROM (M/D HH:MM)</th>
+                <th style="width: 20%;">TO (M/D HH:MM)</th>
+                <th style="width: 10%;">RATE</th>
+                <th style="width: 12%;">USED</th>
+                <th style="width: 30%;">REMARKS</th>
+            </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+    </table>
+
+    <button id="copyBtn" onclick="copyToExcel()">📋 确认无误，一键完美复制到 Excel</button>
 
     <script>
-        // 这是一个数组（篮子），用来装你粘贴的所有图片
-        let imageList = []; 
+        let laytimeData = [];
 
-        window.addEventListener('paste', e => {
-            const items = e.clipboardData.items;
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].type.indexOf('image') !== -1) {
-                    const file = items[i].getAsFile();
-                    const mimeType = file.type;
-                    
-                    const reader = new FileReader();
-                    reader.onload = function(event) {
-                        const imgData = event.target.result;
-                        const base64Str = imgData.split(',')[1]; 
-                        
-                        // 1. 把新图片的数据放进篮子里
-                        imageList.push({
-                            mimeType: mimeType,
-                            base64: base64Str
-                        });
-
-                        // 2. 在网页上显示出这张新图片
-                        const imgElement = document.createElement('img');
-                        imgElement.src = imgData;
-                        imgElement.className = 'preview-img';
-                        document.getElementById('gallery').appendChild(imgElement);
-                    };
-                    reader.readAsDataURL(file);
-                    // 注意：这里我去掉了 break，这样你一次性复制多张图也能全部读取
-                }
+        // 【时间工具】：解析 "M/D HH:MM" 为 JavaScript Date 对象
+        function parseDateTime(dateTimeStr) {
+            if (!dateTimeStr) return null;
+            try {
+                let parts = dateTimeStr.trim().split(' ');
+                if (parts.length !== 2) return null;
+                let [month, day] = parts[0].split('/');
+                let [hour, minute] = parts[1].split(':');
+                // 使用固定年份确保时间差计算不受跨年影响
+                return new Date(2024, parseInt(month) - 1, parseInt(day), parseInt(hour), parseInt(minute));
+            } catch (e) {
+                return null;
             }
-        });
-
-        // 清空图片的函数
-        function clearImages() {
-            imageList = []; // 清空篮子
-            document.getElementById('gallery').innerHTML = ''; // 清空画面
-            document.getElementById('output').innerText = "已清空，等待新操作...";
         }
 
-        async function extractData() {
-            const text = document.getElementById('sofInput').value;
-            const outputEl = document.getElementById('output');
-            
-            if (imageList.length === 0 && !text) {
-                alert("请至少粘贴一张 SOF 图片或输入文字！");
-                return;
-            }
+        // 【时间工具】：将 Date 对象格式化回 "M/D HH:MM"
+        function formatDateTime(dateObj) {
+            const m = dateObj.getMonth() + 1;
+            const d = dateObj.getDate();
+            const hh = String(dateObj.getHours()).padStart(2, '0');
+            const mm = String(dateObj.getMinutes()).padStart(2, '0');
+            return `${m}/${d} ${hh}:${mm}`;
+        }
 
-            outputEl.innerText = `正在让 Gemini 阅读 ${imageList.length} 张图片，请稍候...`;
+        // 🔴 核心业务逻辑：拦截数据并强制计算 12 HOURS TT
+        function injectTurnTime(data) {
+            if (!document.getElementById('ruleTT').checked) return data;
 
-            try {
-                // 注意这里：我们将整个 imageList 数组发给后端
-                const response = await fetch('/api/get-laytime', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        text: text,
-                        images: imageList // 发送多图数组
-                    })
-                });
+            // 1. 找到 NOR 递交的行
+            const norIndex = data.findIndex(row => row.remarks && row.remarks.includes("NOR TENDERED"));
+            if (norIndex === -1) return data; 
 
-                const data = await response.json();
-                
-                if(data.error) {
-                    outputEl.innerText = "错误: " + data.error;
-                } else {
-                    outputEl.innerText = data.result;
+            const norRow = data[norIndex];
+            const norTime = parseDateTime(norRow.from || norRow.to);
+            if (!norTime) return data;
+
+            // 理论上的 12小时结束时间
+            let ttEndTime = new Date(norTime.getTime() + 12 * 60 * 60 * 1000); 
+
+            // 2. 寻找打断 TT 的事件 (移泊 或 开始卸货)
+            const shiftingRow = data.find(row => row.remarks === "SHIFTING N/C");
+            const dischRow = data.find(row => row.remarks === "COMMENCED DISCHG" || (row.remarks && row.remarks.includes("DISCHARGING")));
+
+            if (shiftingRow && shiftingRow.from) {
+                const shiftingStartTime = parseDateTime(shiftingRow.from);
+                if (shiftingStartTime && shiftingStartTime > norTime && shiftingStartTime < ttEndTime) {
+                    ttEndTime = shiftingStartTime; // 卡在移泊内，TT 结束时间 = 移泊开始时间
                 }
-                
-            } catch (error) {
-                outputEl.innerText = "发生网络错误！请确认后端已正确部署。";
             }
+
+            if (dischRow && dischRow.from) {
+                const dischStartTime = parseDateTime(dischRow.from);
+                if (dischStartTime && dischStartTime > norTime && dischStartTime < ttEndTime) {
+                    ttEndTime = dischStartTime; // 卡在卸货前，TT 结束时间 = 卸货开始时间
+                }
+            }
+
+            // 3. 构建 12 HOURS TT 行
+            const ttRecord = {
+                date: norRow.date,
+                from: norRow.from || norRow.to, 
+                to: formatDateTime(ttEndTime),
+                rate: "0%",
+                used: "",
+                remarks: "12 HOURS TT"
+            };
+
+            // 4. 将 TT 插入到 NOR 的下一行
+            const newData = [...data];
+            newData.splice(norIndex + 1, 0, ttRecord);
+            return newData;
+        }
+
+        async function processImage() {
+            // const fileInput = document.getElementById('imageInput');
+            // if (!fileInput.files[0]) return alert("请先上传一张 SOF 截图");
+
+            document.getElementById('loading').style.display = 'inline';
+            document.getElementById('submitBtn').disabled = true;
+
+            // 【占位】未来这里写 fetch('/api/get-laytime') 调用大模型
+            
+            // 模拟 AI 按照你新版要求返回的 JSON 数据
+            setTimeout(() => {
+                let aiRawData = [
+                    { date: "4/14", from: "4/14 06:30", to: "", rate: "", used: "", remarks: "VESSEL ARRIVED & NOR TENDERED" },
+                    { date: "4/14", from: "4/14 20:10", to: "4/14 22:00", rate: "0%", used: "", remarks: "SHIFTING N/C" },
+                    { date: "4/14", from: "4/14 22:00", to: "4/14 22:40", rate: "100%", used: "", remarks: "FULL TIME TO COUNT" },
+                    { date: "4/14", from: "4/14 22:40", to: "4/14 23:50", rate: "0%", used: "", remarks: "DRAFT SURVEY N/C" },
+                    { date: "4/15", from: "4/15 00:50", to: "", rate: "", used: "", remarks: "COMMENCED DISCHG" }
+                ];
+                
+                // 🪄 调用硬逻辑计算 12 HOURS TT
+                laytimeData = injectTurnTime(aiRawData);
+                
+                renderTable(laytimeData);
+                
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('submitBtn').disabled = false;
+                document.getElementById('resultTable').style.display = 'table';
+                document.getElementById('copyBtn').style.display = 'block';
+            }, 1500);
+        }
+
+        function renderTable(data) {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = ''; 
+            data.forEach((row, index) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="display:none;"><input type="text" id="date-${index}" value="${row.date || ''}"></td>
+                    <td><input type="text" id="from-${index}" value="${row.from || ''}"></td>
+                    <td><input type="text" id="to-${index}" value="${row.to || ''}"></td>
+                    <td><input type="text" id="rate-${index}" value="${row.rate || ''}"></td>
+                    <td><input type="text" id="used-${index}" value="${row.used || ''}"></td>
+                    <td><input type="text" id="desc-${index}" value="${row.remarks || ''}"></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function copyToExcel() {
+            let clipboardText = "";
+            
+            laytimeData.forEach((_, index) => {
+                // 读取当前输入框里（可能被你手动修改过）的最新值
+                const from = document.getElementById(`from-${index}`).value;
+                const to = document.getElementById(`to-${index}`).value;
+                const rate = document.getElementById(`rate-${index}`).value;
+                const used = document.getElementById(`used-${index}`).value;
+                const desc = document.getElementById(`desc-${index}`).value;
+                
+                // 完美匹配 Excel 五列: FROM | TO | RATE | USED | REMARKS
+                clipboardText += `${from}\t${to}\t${rate}\t${used}\t${desc}\n`;
+            });
+
+            navigator.clipboard.writeText(clipboardText).then(() => {
+                const btn = document.getElementById('copyBtn');
+                btn.innerText = "✅ 复制成功！快去 Excel 选定第一个单元格 (Ctrl+V) 吧";
+                btn.style.background = "#218838";
+                setTimeout(() => {
+                    btn.innerText = "📋 确认无误，一键完美复制到 Excel";
+                    btn.style.background = "#28a745";
+                }, 3000);
+            }).catch(err => {
+                alert("复制失败: " + err);
+            });
         }
     </script>
 </body>
