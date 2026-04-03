@@ -143,36 +143,85 @@
             return newData;
         }
 
-        async function processImage() {
-            // const fileInput = document.getElementById('imageInput');
-            // if (!fileInput.files[0]) return alert("请先上传一张 SOF 截图");
-
-            document.getElementById('loading').style.display = 'inline';
-            document.getElementById('submitBtn').disabled = true;
-
-            // 【占位】未来这里写 fetch('/api/get-laytime') 调用大模型
-            
-            // 模拟 AI 按照你新版要求返回的 JSON 数据
-            setTimeout(() => {
-                let aiRawData = [
-                    { date: "4/14", from: "4/14 06:30", to: "", rate: "", used: "", remarks: "VESSEL ARRIVED & NOR TENDERED" },
-                    { date: "4/14", from: "4/14 20:10", to: "4/14 22:00", rate: "0%", used: "", remarks: "SHIFTING N/C" },
-                    { date: "4/14", from: "4/14 22:00", to: "4/14 22:40", rate: "100%", used: "", remarks: "FULL TIME TO COUNT" },
-                    { date: "4/14", from: "4/14 22:40", to: "4/14 23:50", rate: "0%", used: "", remarks: "DRAFT SURVEY N/C" },
-                    { date: "4/15", from: "4/15 00:50", to: "", rate: "", used: "", remarks: "COMMENCED DISCHG" }
-                ];
-                
-                // 🪄 调用硬逻辑计算 12 HOURS TT
-                laytimeData = injectTurnTime(aiRawData);
-                
-                renderTable(laytimeData);
-                
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('submitBtn').disabled = false;
-                document.getElementById('resultTable').style.display = 'table';
-                document.getElementById('copyBtn').style.display = 'block';
-            }, 1500);
-        }
+       async function processImage() {
+                   const fileInput = document.getElementById('imageInput');
+                   if (!fileInput.files[0]) return alert("请先上传一张 SOF 截图");
+       
+                   document.getElementById('loading').style.display = 'inline';
+                   document.getElementById('submitBtn').disabled = true;
+                   document.getElementById('resultTable').style.display = 'none';
+                   document.getElementById('copyBtn').style.display = 'none';
+       
+                   try {
+                       // 1. 将图片转为 Base64
+                       const file = fileInput.files[0];
+                       const base64String = await new Promise((resolve, reject) => {
+                           const reader = new FileReader();
+                           reader.onloadend = () => resolve(reader.result);
+                           reader.onerror = reject;
+                           reader.readAsDataURL(file);
+                       });
+       
+                       // 2. 组装终极 Prompt (这里是你之前确认过的卸港规则)
+                       // 要求千问包在一层 { "data": [...] } 里，方便 JSON 解析
+                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。当前任务：读取【卸货港】的 SOF 图片，严格按照以下优先级规则提取时间线，并输出规范的 JSON 格式。
+       必须且只能输出包含 data 键的 JSON 对象，格式如下：
+       {
+         "data": [
+           {
+             "date": "月/日 (如 4/14)",
+             "from": "M/D HH:MM",
+             "to": "M/D HH:MM",
+             "rate": "0%或100%",
+             "used": "",
+             "remarks": "标准动作描述"
+           }
+         ]
+       }
+       
+       【业务处理规则】
+       1. 移泊合并：触发开启 "PILOT ON BOARD","ANCHOR AWEIGH"。触发关闭 "ALL FAST","FIRST LINE"。rate:"0%", remarks:"SHIFTING N/C"。
+       2. 初水尺：包含 "INITIAL DRAFT SURVEY"。rate:"0%", remarks:"DRAFT SURVEY N/C"。
+       3. 坏天气：包含 "bad weather"或"rain"。rate:"0%", remarks:"BAD WEATHER N/C"。
+       4. 兜底规则：提取 NOR 递交时间，rate:"", remarks:"VESSEL ARRIVED & NOR TENDERED"；提取卸货开始和结束。未覆盖时间rate默认"100%"。`;
+       
+                       // 3. 调用我们自己写的 Vercel 后端接口
+                       const response = await fetch('/api/get-laytime', {
+                           method: 'POST',
+                           headers: { 'Content-Type': 'application/json' },
+                           body: JSON.stringify({
+                               imageBase64: base64String,
+                               systemPrompt: systemPrompt
+                           })
+                       });
+       
+                       const result = await response.json();
+       
+                       if (!response.ok) {
+                           throw new Error(result.error || '请求失败');
+                       }
+       
+                       if (!result.data || result.data.length === 0) {
+                           throw new Error("AI 没有提取到有效数据，请检查图片是否清晰");
+                       }
+       
+                       // 4. 执行 JS 硬逻辑计算 12 HOURS TT
+                       laytimeData = injectTurnTime(result.data);
+                       
+                       // 5. 渲染表格
+                       renderTable(laytimeData);
+                       
+                       document.getElementById('resultTable').style.display = 'table';
+                       document.getElementById('copyBtn').style.display = 'block';
+       
+                   } catch (error) {
+                       alert("提取失败：" + error.message);
+                       console.error(error);
+                   } finally {
+                       document.getElementById('loading').style.display = 'none';
+                       document.getElementById('submitBtn').disabled = false;
+                   }
+               }
 
         function renderTable(data) {
             const tbody = document.getElementById('tableBody');
