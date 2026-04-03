@@ -94,54 +94,80 @@
             return `${m}/${d} ${hh}:${mm}`;
         }
 
-        // 🔴 核心业务逻辑：拦截数据并强制计算 12 HOURS TT
-        function injectTurnTime(data) {
-            if (!document.getElementById('ruleTT').checked) return data;
-
-            // 1. 找到 NOR 递交的行
-            const norIndex = data.findIndex(row => row.remarks && row.remarks.includes("NOR TENDERED"));
-            if (norIndex === -1) return data; 
-
-            const norRow = data[norIndex];
-            const norTime = parseDateTime(norRow.from || norRow.to);
-            if (!norTime) return data;
-
-            // 理论上的 12小时结束时间
-            let ttEndTime = new Date(norTime.getTime() + 12 * 60 * 60 * 1000); 
-
-            // 2. 寻找打断 TT 的事件 (移泊 或 开始卸货)
-            const shiftingRow = data.find(row => row.remarks === "SHIFTING N/C");
-            const dischRow = data.find(row => row.remarks === "COMMENCED DISCHG" || (row.remarks && row.remarks.includes("DISCHARGING")));
-
-            if (shiftingRow && shiftingRow.from) {
-                const shiftingStartTime = parseDateTime(shiftingRow.from);
-                if (shiftingStartTime && shiftingStartTime > norTime && shiftingStartTime < ttEndTime) {
-                    ttEndTime = shiftingStartTime; // 卡在移泊内，TT 结束时间 = 移泊开始时间
+        // 🔴 核心业务逻辑：拦截数据，强制计算 12 HOURS TT 并自动裁剪重叠时间
+                function injectTurnTime(data) {
+                    if (!document.getElementById('ruleTT').checked) return data;
+        
+                    // 1. 找到 NOR 递交时间
+                    const norRow = data.find(row => row.remarks === "VESSEL ARRIVED & NOR TENDERED");
+                    if (!norRow) return data; 
+                    const norTime = parseDateTime(norRow.from);
+                    if (!norTime) return data;
+        
+                    // 理论 12小时结束时间
+                    let ttEndTime = new Date(norTime.getTime() + 12 * 60 * 60 * 1000); 
+        
+                    // 2. 寻找打断 TT 的事件并重置结束时间
+                    const shiftingRow = data.find(row => row.remarks === "SHIFTING N/C");
+                    if (shiftingRow && shiftingRow.from) {
+                        const shiftStart = parseDateTime(shiftingRow.from);
+                        if (shiftStart > norTime && shiftStart < ttEndTime) ttEndTime = shiftStart;
+                    }
+        
+                    const dischRow = data.find(row => row.remarks === "COMMENCED DISCHG");
+                    if (dischRow && dischRow.from) {
+                        const dischStart = parseDateTime(dischRow.from);
+                        if (dischStart > norTime && dischStart < ttEndTime) ttEndTime = dischStart;
+                    }
+        
+                    // 3. 构建全新的无缝数据流
+                    let newData = [];
+                    let ttInserted = false;
+        
+                    for (let i = 0; i < data.length; i++) {
+                        let row = data[i];
+        
+                        // 遇到单点事件（如 NOR, COMMENCED DISCHG），直接放行
+                        if (!row.to || row.to === "") {
+                            newData.push(row);
+                            // 如果是 NOR，顺便把 TT 插在它后面
+                            if (row.remarks === "VESSEL ARRIVED & NOR TENDERED") {
+                                newData.push({
+                                    date: row.date,
+                                    from: row.from,
+                                    to: formatDateTime(ttEndTime),
+                                    rate: "0%",
+                                    used: "",
+                                    remarks: "12 HOURS TT"
+                                });
+                                ttInserted = true;
+                            }
+                            continue;
+                        }
+        
+                        // 处理时间段事件（需要检查是否与 TT 重叠并进行裁剪）
+                        if (ttInserted) {
+                            let rowStart = parseDateTime(row.from);
+                            let rowEnd = parseDateTime(row.to);
+        
+                            if (rowStart < ttEndTime && rowEnd > ttEndTime) {
+                                // 【核心裁剪】：如果这个时段跨越了 TT 的结束点，那就把它的开头切掉，从 TT 结束的地方开始
+                                row.from = formatDateTime(ttEndTime);
+                                newData.push(row);
+                            } else if (rowEnd <= ttEndTime) {
+                                // 如果这个时段完全被 TT 包裹住了，直接丢弃（被 TT 吃掉了）
+                                continue;
+                            } else {
+                                // 发生在 TT 之后的时段，直接保留
+                                newData.push(row);
+                            }
+                        } else {
+                            newData.push(row);
+                        }
+                    }
+        
+                    return newData;
                 }
-            }
-
-            if (dischRow && dischRow.from) {
-                const dischStartTime = parseDateTime(dischRow.from);
-                if (dischStartTime && dischStartTime > norTime && dischStartTime < ttEndTime) {
-                    ttEndTime = dischStartTime; // 卡在卸货前，TT 结束时间 = 卸货开始时间
-                }
-            }
-
-            // 3. 构建 12 HOURS TT 行
-            const ttRecord = {
-                date: norRow.date,
-                from: norRow.from || norRow.to, 
-                to: formatDateTime(ttEndTime),
-                rate: "0%",
-                used: "",
-                remarks: "12 HOURS TT"
-            };
-
-            // 4. 将 TT 插入到 NOR 的下一行
-            const newData = [...data];
-            newData.splice(norIndex + 1, 0, ttRecord);
-            return newData;
-        }
 
        async function processImage() {
                    const fileInput = document.getElementById('imageInput');
@@ -164,43 +190,39 @@
        
                        // 2. 组装终极 Prompt (这里是你之前确认过的卸港规则)
                        // 要求千问包在一层 { "data": [...] } 里，方便 JSON 解析
-                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。当前任务：读取【卸货港】的 SOF (Statement of Facts) 图片，严格按照以下优先级规则提取时间线，并输出规范的 JSON 格式。
+                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。当前任务：读取【卸货港】的 SOF (Statement of Facts) 图片，按优先级规则提取时间线，输出规范 JSON。
                        
                        【输出规范】
-                       必须且只能输出包含 data 键的 JSON 对象，格式如下：
+                       必须且只能输出包含 data 键的 JSON 对象：
                        {
                          "data": [
                            {
                              "date": "月/日 (如 4/14)",
                              "from": "M/D HH:MM",
-                             "to": "M/D HH:MM (如果是单点事件，to 可与 from 相同或为空)",
-                             "rate": "按规则输出 0% 或 100%",
-                             "used": "强制留空，不作计算",
-                             "remarks": "按规则输出的标准动作描述"
+                             "to": "M/D HH:MM (单点事件留空)",
+                             "rate": "0% 或 100% (单点事件留空)",
+                             "used": "",
+                             "remarks": "标准动作描述"
                            }
                          ]
                        }
                        
-                       【业务处理规则（按优先级从高到低严格执行）】
+                       【核心范围限制（最高优先级）】
+                       1. 起点：从递交 NOR 开始。
+                       2. 终点：当你读取到卸货完成（"DISCHARGING COMPLETED" 等）时，提取该行并立即停止读取后续内容（忽略末次水尺、出港手续、带缆起航等）。
+                       3. 连续性要求：输出的时间线必须是首尾相连的（除了单点事件外，上一条的 to 必须等于下一条的 from），不可有时间断层。
                        
-                       规则 A：移泊时间合并 (SHIFTING)
-                       - 触发开启：读取到包含 "PILOT ON BOARD", "ANCHOR AWEIGH" 或 "PROCEED" 等词汇。
-                       - 触发关闭：忽略中间所有检疫、海关、带缆动作，直到读取到 "ALL FAST", "MAKE FAST" 或 "FIRST LINE"。
-                       - 输出要求：提取这整个时间段。rate: "0%", used: "", remarks: "SHIFTING N/C"。
+                       【业务处理规则（严格按要求标准化 remarks）】
+                       单点事件（不需要 to 和 rate）：
+                       - 递交 NOR：提取具体时间。remarks 强制输出: "VESSEL ARRIVED & NOR TENDERED"。
+                       - 开始卸货：遇到开始卸货动作。remarks 强制输出: "COMMENCED DISCHG"。
+                       - 卸货完成：遇到完货动作。remarks 强制输出: "COMPLETED DISCHG"。
                        
-                       规则 B：初水尺时间 (INITIAL DRAFT SURVEY)
-                       - 触发条件：动作描述中包含 "INITIAL DRAFT SURVEY" 或 "INITIAL DRAFT"。
-                       - 输出要求：提取该动作完整的开始(from)和结束(to)时间。rate: "0%", used: "", remarks: "DRAFT SURVEY N/C"。
-                       
-                       规则 C：坏天气时间 (BAD WEATHER)
-                       - 触发条件：因天气原因导致的停工，描述包含 "bad weather" 或 "rain"。
-                       - 输出要求：提取完整的开始和结束时间。rate: "0%", used: "", remarks: "BAD WEATHER N/C"。
-                       
-                       常规动作与默认补全 (兜底规则)
-                       - 递交 NOR：提取该单点时间，rate为空，remarks 强制输出: "VESSEL ARRIVED & NOR TENDERED"（注意：这是供系统触发后续逻辑的关键锚点，必须准确提取）。
-                       - 开始卸货：遇到开始卸货的描述，remarks 强制输出: "COMMENCED DISCHG"。
-                       - 卸货完成：遇到完货描述 ("COMPLETED" 等)，remarks 强制输出: "COMPLETED DISCHG"。
-                       - 其他常规作业时间：未被上述规则 A/B/C 覆盖的正常作业时间，rate 默认标记为 "100%"。`;
+                       时间段事件（必须包含 from, to, rate）：
+                       - 时段 A (0%)：移泊 (SHIFTING)。从 "PILOT ON BOARD"/ "ANCHOR AWEIGH" 到 "ALL FAST"/"MAKE FAST"/"FIRST LINE"。rate: "0%", remarks: "SHIFTING N/C"。
+                       - 时段 B (0%)：初水尺 (INITIAL DRAFT SURVEY)。rate: "0%", remarks: "DRAFT SURVEY N/C"。
+                       - 时段 C (0%)：坏天气 (BAD WEATHER)。遇到 bad weather 或 rain。rate: "0%", remarks: "BAD WEATHER N/C"。
+                       - 时段 D (100%) [常规作业与默认补全]：**除上述 0% 时段外的所有其余时间（包括靠泊等待、海关检疫、准备卸货、卸货过程等），统统合并**为连续的时间段。rate 强制标记: "100%", remarks 统一归纳输出: "FULL TIME TO COUNT"。`;
        
                        // 3. 调用我们自己写的 Vercel 后端接口
                        const response = await fetch('/api/get-laytime', {
