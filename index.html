@@ -94,27 +94,53 @@
             return `${m}/${d} ${hh}:${mm}`;
         }
 
-        // 🔴 核心业务逻辑：智能缝合时间段、拦截数据、强制计算 12 HOURS TT 并自动裁剪重叠时间
+        // 🔴 核心业务逻辑：拦截、拆分单点、智能缝合、强制切断
                 function injectTurnTime(data) {
+                    
+                    // ================= 第 0 步：预处理 (分离单点，强制切断) =================
+                    let cleanData = [];
+                    for (let row of data) {
+                        if (row.remarks === "VESSEL ARRIVED & NOR TENDERED") {
+                            row.to = ""; // 强制变成单点
+                            row.rate = "";
+                            cleanData.push(row);
+                        } else if (row.remarks === "COMMENCED DISCHG") {
+                            // AI 抄下来的是时间段，JS 负责把它拆成“单点动作”和“开始干活时间”
+                            cleanData.push({ date: row.date, from: row.from, to: "", rate: "", used: "", remarks: "COMMENCED DISCHG" });
+                            if (row.to && row.to !== row.from) {
+                                cleanData.push({ date: row.date, from: row.from, to: row.to, rate: "100%", used: "", remarks: "FULL TIME TO COUNT" });
+                            }
+                        } else if (row.remarks === "COMPLETED DISCHG") {
+                            // 拆分出完货前的干活时间，然后把完货作为单点压轴
+                            if (row.from && row.to !== row.from) {
+                                cleanData.push({ date: row.date, from: row.from, to: row.to, rate: "100%", used: "", remarks: "FULL TIME TO COUNT" });
+                            }
+                            cleanData.push({ date: row.date, from: row.to || row.from, to: "", rate: "", used: "", remarks: "COMPLETED DISCHG" });
+                            
+                            // 🚨🚨 斩首行动！遇到完货动作直接跳出循环，彻底抛弃后面的所有废数据！🚨🚨
+                            break; 
+                        } else {
+                            cleanData.push(row);
+                        }
+                    }
+        
                     // ================= 第一步：智能缝合相邻同类项 =================
-                    // AI 逐行打标签后，JS 负责把相邻且 remarks 相同的行无缝缝合
                     let mergedData = [];
-                    for (let i = 0; i < data.length; i++) {
-                        let row = Object.assign({}, data[i]); 
+                    for (let i = 0; i < cleanData.length; i++) {
+                        let row = Object.assign({}, cleanData[i]); 
                         if (mergedData.length > 0) {
                             let last = mergedData[mergedData.length - 1];
-                            // 单点关键事件不参与缝合
                             const isSinglePoint = ["VESSEL ARRIVED & NOR TENDERED", "COMMENCED DISCHG", "COMPLETED DISCHG"].includes(row.remarks);
                             
-                            // 【缝合魔法】如果连续两行的 remarks 一样，就把上一行的结尾拉长到这一行的结尾！
+                            // 【缝合魔法】如果连续两行的 remarks 一样，就把上一行的结尾拉长！
                             if (!isSinglePoint && last.remarks === row.remarks) {
                                 last.to = row.to; 
-                                continue; // 吃掉这一行，继续处理下一个
+                                continue;
                             }
                         }
                         mergedData.push(row);
                     }
-                    data = mergedData; // 更新 data 为缝合后的干净数组
+                    data = mergedData; 
         
                     // ================= 第二步：处理 12 小时 TT =================
                     if (!document.getElementById('ruleTT').checked) return data;
@@ -135,7 +161,7 @@
         
                     const dischRow = data.find(row => row.remarks === "COMMENCED DISCHG");
                     if (dischRow && dischRow.from) {
-                        const dischStart = parseDateTime(dischRow.from);
+                        const dischStart = parseDateTime(dischRow.from || dischRow.to);
                         if (dischStart > norTime && dischStart < ttEndTime) ttEndTime = dischStart;
                     }
         
@@ -180,7 +206,7 @@
                     }
         
                     return finalData;
-                }
+                }        
                 
 
        async function processImage() {
@@ -204,12 +230,7 @@
        
                        // 2. 组装终极 Prompt (这里是你之前确认过的卸港规则)
                        // 要求千问包在一层 { "data": [...] } 里，方便 JSON 解析
-                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。
-                       
-                       最高优先级指令：Laytime 提取终点限制
-                       航运 Laytime 结算到“卸货完成”即刻彻底终止！
-                       请你从 NOR 递交开始往下逐行提取。当你读取到【卸货完成】（动作描述包含 "DISCHARGING COMPLETED" 或类似完货表述）时，提取完这一行，必须【立即停止所有提取工作】！
-                       哪怕图片最下方还有 "FINAL DRAFT SURVEY" (末次水尺)、"OUTWARD FORMALITIES" (出境手续)、"PILOT" (引航员)、"ALL LINE CLEAR / SAILING" (解缆起航) 等动作，也【绝对禁止输出】！不要让这些无效动作污染数据。
+                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。当前任务：逐行提取 SOF 图片中的时间线并打标签。
                        
                        【输出规范】
                        必须且只能输出包含 data 键的 JSON 对象：
@@ -226,14 +247,16 @@
                          ]
                        }
                        
-                       【逐行“无脑”打标签规则（仅对完货前的数据生效，严禁擅自合并时间段！）】
-                       原图有几行，你就输出几行数据！只需根据行内包含的关键词，替换其 rate 和 remarks：
-                       1. NOR递交（单点事件）：rate留空，remarks 强制填 "VESSEL ARRIVED & NOR TENDERED"。
-                       2. 移泊动作：只要该行描述中包含 "PILOT", "PROCEED", "FIRST LINE", "ALL FAST", "MAKE FAST" 任意一个词，rate 填 "0%"，remarks 强制填 "SHIFTING N/C"。（注：即使移泊跨越多行，你也逐行打上 SHIFTING N/C 的标签，不要自己合并）。
-                       3. 初水尺：包含 "INITIAL DRAFT"。rate 填 "0%"，remarks 强制填 "DRAFT SURVEY N/C"。
-                       4. 开始卸货（单点事件）：包含 "COMMENCED" 的卸货动作。rate留空，remarks 强制填 "COMMENCED DISCHG"。
-                       5. 卸货完成（单点事件，这是最后一条数据！）：包含完货动作。rate留空，remarks 强制填 "COMPLETED DISCHG"。
-                       6. 其他时间（兜底）：除了上述 1 到 5 的特殊动作，完货前的其余所有等待或作业（包括等待靠泊、检疫、海关、准备卸货等），照抄起止时间，rate 填 "100%"，remarks 统一强制填 "FULL TIME TO COUNT"。`;
+                       【逐行无脑提取规则（最重要指令！）】
+                       请老老实实照抄原图每一行的 from 和 to 时间！绝对不要自己省略或合并时间段！
+                       然后，根据该行原本的描述（DESCRIPTION）中包含的英文关键词，强制替换对应的 rate 和 remarks：
+                       
+                       1. 只要包含 "NOR" -> rate留空，remarks填 "VESSEL ARRIVED & NOR TENDERED"
+                       2. 只要包含 "PILOT", "PROCEED", "FIRST LINE", "ALL FAST", "MAKE FAST" 之一 -> rate填"0%"，remarks填 "SHIFTING N/C"
+                       3. 只要包含 "INITIAL DRAFT" -> rate填"0%"，remarks填 "DRAFT SURVEY N/C"
+                       4. 只要包含 "DISCHARGING" 且包含 "COMMENCED" -> rate填"100%"，remarks填 "COMMENCED DISCHG"
+                       5. 只要包含 "DISCHARGING" 且包含 "COMPLETED" -> rate填"100%"，remarks填 "COMPLETED DISCHG"
+                       6. 其他兜底（没有上述关键词的行） -> rate填"100%"，remarks填 "FULL TIME TO COUNT"`;
 					   
        
                        // 3. 调用我们自己写的 Vercel 后端接口
