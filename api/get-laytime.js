@@ -20,7 +20,7 @@ export default async function handler(req, res) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'qwen-vl-max', // qwen-vl-max 是目前千问看图最强的模型
+                model: 'qwen3.6-plus',
                 messages: [
                     {
                         role: 'system',
