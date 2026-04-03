@@ -232,31 +232,38 @@
                        // 要求千问包在一层 { "data": [...] } 里，方便 JSON 解析
                        const systemPrompt = `你是一个无情的 OCR 数据提取机器。当前任务：将 SOF 图片中的表格逐行转换为 JSON 数组。
                        
-                       🚨【最高优先级要求：绝对禁止合并或遗漏任何行！】🚨
-                       原图表格中有几行数据，你的 JSON 数组里就必须有多少个对象！
-                       严格按照从上到下的顺序，逐行照抄 FROM 和 TO 的时间。绝不允许把多行合并成一行！
+                       🚨【最高优先级：时间格式必须包含日期！】🚨
+                       原图中间列的时间只有 HH:MM，你必须结合图片最左侧的 DATE 列（如 Apr,14,2025），将 from 和 to 强制补全为 "M/D HH:MM" 格式（例如 "4/14 06:30"）。绝对不能只输出 "06:30"！如果没有结束时间，to 留空。
                        
-                       【打标签规则（按优先级顺序，满足第一条就不看后面的）：】
-                       请仔细阅读该行 DESCRIPTION 里的文字，根据以下优先级替换标签：
+                       🚨【第二优先级：绝不许合并行】🚨
+                       原图表格中有几行，你就输出几个对象！严格逐行提取，绝不允许擅自把多行时间合并。
                        
-                       1. 包含 "N.O.R" 或 "NOR"：必定是递交 NOR（注意：即使里面有 PILOT 等词，只要有 NOR 也是这条规则优先！）。rate填""，remarks强制填"VESSEL ARRIVED & NOR TENDERED"。
-                       2. 包含 "DISCHARGING" 且包含 "COMPLETED"：rate填"100%"，remarks强制填"COMPLETED DISCHG"。【注意：提取完这一行后，立即停止整个任务，绝不提取后续的任何行！】
-                       3. 包含 "COMMENCED" 且包含 "DISCHARGING"：rate填"100%"，remarks强制填"COMMENCED DISCHG"。
-                       4. 包含 "INITIAL DRAFT"：rate填"0%"，remarks强制填"DRAFT SURVEY N/C"。
-                       5. 包含 "PILOT", "PROCEED", "FIRST LINE", "ALL FAST", "MAKE FAST" 任意一个：rate填"0%"，remarks强制填"SHIFTING N/C"。
-                       6. 如果以上 1 到 5 的词汇都不包含（例如图上的等待靠泊 WAITED FOR BERTHING, 检疫 QUARANTINE, 办手续 FORMALITIES, 准备卸货 PREPARE 等等）：照抄起止时间，rate填"100%"，remarks统一强制填"FULL TIME TO COUNT"。
+                       【打标签规则（按优先级，替换 rate 和 remarks）：】
+                       1. 包含 "N.O.R" 或 "NOR"：rate填""，remarks强制填 "VESSEL ARRIVED & NOR TENDERED"（即使有 PILOT 也是此条优先）。
+                       2. 包含 "DISCHARGING" 且包含 "COMPLETED"：rate填""，remarks强制填 "COMPLETED DISCHG"。【提取完此行立即停止整个任务，绝不提取后续内容！】
+                       3. 包含 "COMMENCED" 且包含 "DISCHARGING"：rate填""，remarks强制填 "COMMENCED DISCHG"。
+                       4. 包含 "INITIAL DRAFT"：rate填"0%"，remarks强制填 "DRAFT SURVEY N/C"。
+                       5. 包含 "PILOT", "PROCEED", "FIRST LINE", "ALL FAST", "MAKE FAST" 任意一个：rate填"0%"，remarks强制填 "SHIFTING N/C"。
+                       6. 其他所有行（如 WAITED FOR BERTHING, QUARANTINE, FORMALITIES, PREPARE 等）：rate填"100%"，remarks强制填 "FULL TIME TO COUNT"。
                        
-                       【输出规范】
-                       必须且只能输出包含 data 键的 JSON 对象：
+                       【输出规范示例（务必严格模仿此格式）：】
                        {
                          "data": [
                            {
-                             "date": "月/日 (如 4/14)",
-                             "from": "M/D HH:MM (照抄原图，如果没有就留空)",
-                             "to": "M/D HH:MM (照抄原图，如果没有就留空)",
-                             "rate": "按规则输出",
+                             "date": "4/14",
+                             "from": "4/14 06:30",
+                             "to": "",
+                             "rate": "",
                              "used": "",
-                             "remarks": "按规则输出的标准描述"
+                             "remarks": "VESSEL ARRIVED & NOR TENDERED"
+                           },
+                           {
+                             "date": "4/14",
+                             "from": "4/14 06:30",
+                             "to": "4/14 20:10",
+                             "rate": "100%",
+                             "used": "",
+                             "remarks": "FULL TIME TO COUNT"
                            }
                          ]
                        }`;
