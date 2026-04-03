@@ -20,7 +20,7 @@ export default async function handler(req, res) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'qwen3.6-plus',
+                model: 'qwen-vl-max',
                 messages: [
                     {
                         role: 'system',
