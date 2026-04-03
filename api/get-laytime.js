@@ -1,61 +1,73 @@
 // api/get-laytime.js
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: '只允许 POST 请求' });
-  }
+    // 限制只能用 POST 请求
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
 
-  // 接收前端发来的 text (文本) 和 images (图片数组)
-  const { text, images } = req.body;
-  const apiKey = process.env.GEMINI_API_KEY; 
+    try {
+        const { imageBase64, systemPrompt } = req.body;
 
-  if (!apiKey) {
-      return res.status(500).json({ error: '服务器未配置 API Key' });
-  }
+        if (!imageBase64) {
+            return res.status(400).json({ error: '没有提供图片数据' });
+        }
 
-  try {
-    // 组装发给 Gemini 的基础提示词
-    let promptParts = [
-      { text: "你是一个专业的航运 Laytime 结算助手。请阅读提供的 SOF 截图（可能有多页）或文本，按时间顺序梳理，提取所有关键事件的开始时间、结束时间和事件描述(REMARKS)。不要计算用时。请严格按 JSON 数组格式输出，包含字段：startTime, endTime, remarks。如果用户有额外说明请参考：" + (text || "无") }
-    ];
-
-    // 如果前端传来了图片数组，把每一张图片都加入到 promptParts 里
-    if (images && images.length > 0) {
-        images.forEach(img => {
-            promptParts.push({
-                inline_data: {
-                    mime_type: img.mimeType,
-                    data: img.base64
-                }
-            });
+        // 调用千问的视觉大模型 (OpenAI 兼容模式)
+        const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.QWEN_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'qwen-vl-max', // qwen-vl-max 是目前千问看图最强的模型
+                messages: [
+                    {
+                        role: 'system',
+                        content: systemPrompt
+                    },
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: '请提取这张 SOF 上的时间线，并严格按要求输出 JSON 格式。' },
+                            { type: 'image_url', image_url: { url: imageBase64 } }
+                        ]
+                    }
+                ],
+                // 强制要求模型输出 JSON 格式降低幻觉
+                response_format: { type: "json_object" } 
+            })
         });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error?.message || 'API 请求失败');
+        }
+
+        // 解析千问返回的内容
+        const aiContent = data.choices[0].message.content;
+        
+        // 尝试将返回的字符串解析为 JSON 对象
+        const parsedData = JSON.parse(aiContent);
+        
+        // 为了兼容不同的 JSON 包装方式，提取出数组部分
+        let resultArray = [];
+        if (Array.isArray(parsedData)) {
+            resultArray = parsedData;
+        } else if (parsedData.data && Array.isArray(parsedData.data)) {
+            resultArray = parsedData.data;
+        } else {
+            // 如果它返回了其他格式的对象，尝试提取其中的数组
+            Object.values(parsedData).forEach(val => {
+                if (Array.isArray(val)) resultArray = val;
+            });
+        }
+
+        return res.status(200).json({ data: resultArray });
+
+    } catch (error) {
+        console.error('AI 提取错误:', error);
+        return res.status(500).json({ error: error.message || '内部服务器错误' });
     }
-
-    // 呼叫 Gemini 1.5 Flash 模型
-    // 方案A：加上 -latest 后缀
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-002:generateContent?key=${apiKey}`;
-    
-    const response = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-            parts: promptParts
-        }]
-      })
-    });
-
-    const data = await response.json();
-
-    if (data.error) {
-       return res.status(500).json({ error: data.error.message });
-    }
-
-    const finalResult = data.candidates[0].content.parts[0].text;
-    res.status(200).json({ result: finalResult });
-
-  } catch (error) {
-    res.status(500).json({ error: '请求 Gemini 接口失败，请检查网络或后端日志' });
-  }
 }
