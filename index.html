@@ -204,10 +204,15 @@
        
                        // 2. 组装终极 Prompt (这里是你之前确认过的卸港规则)
                        // 要求千问包在一层 { "data": [...] } 里，方便 JSON 解析
-                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。当前任务：读取【卸货港】的 SOF 图片，逐行打标签提取，输出规范的 JSON 格式。
+                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。
+                       
+                       最高优先级指令：Laytime 提取终点限制
+                       航运 Laytime 结算到“卸货完成”即刻彻底终止！
+                       请你从 NOR 递交开始往下逐行提取。当你读取到【卸货完成】（动作描述包含 "DISCHARGING COMPLETED" 或类似完货表述）时，提取完这一行，必须【立即停止所有提取工作】！
+                       哪怕图片最下方还有 "FINAL DRAFT SURVEY" (末次水尺)、"OUTWARD FORMALITIES" (出境手续)、"PILOT" (引航员)、"ALL LINE CLEAR / SAILING" (解缆起航) 等动作，也【绝对禁止输出】！不要让这些无效动作污染数据。
                        
                        【输出规范】
-                       必须且只能输出包含 data 的 JSON 对象：
+                       必须且只能输出包含 data 键的 JSON 对象：
                        {
                          "data": [
                            {
@@ -221,17 +226,15 @@
                          ]
                        }
                        
-                       【提取终点（最高指令）】
-                       从 NOR 递交开始提取。当你读取到“卸货完成”（DISCHARGING COMPLETED 或类似完货表述）所在的行后，提取该行并立即停止！绝不提取后续任何动作。
-                       
-                       【逐行“无脑”打标签规则（严禁 AI 擅自合并时间！）】
+                       【逐行“无脑”打标签规则（仅对完货前的数据生效，严禁擅自合并时间段！）】
                        原图有几行，你就输出几行数据！只需根据行内包含的关键词，替换其 rate 和 remarks：
-                       1. NOR递交（单点事件）：rate留空，remarks 强制填 "VESSEL ARRIVED & NOR TENDERED"
-                       2. 移泊动作：只要该行描述中包含 "PILOT", "PROCEED", "FIRST LINE", "ALL FAST", "MAKE FAST" 任意一个词，rate 填 "0%"，remarks 强制填 "SHIFTING N/C"。（注：即使移泊过程在图上分成了两三行，你也给我分别输出两三行 SHIFTING N/C，绝对不要自己合并）
-                       3. 初水尺：包含 "INITIAL DRAFT"。rate 填 "0%"，remarks 强制填 "DRAFT SURVEY N/C"
-                       4. 开始卸货（单点事件）：包含 "COMMENCED" 的卸货动作。rate留空，remarks 强制填 "COMMENCED DISCHG"
-                       5. 卸货完成（单点事件）：包含完货动作。rate留空，remarks 强制填 "COMPLETED DISCHG"
-                       6. 其他时间（兜底）：除了上述特殊动作，其余所有的等待或作业（包括图上的等待靠泊、检疫、海关手续、准备卸货等），照抄起止时间，rate 填 "100%"，remarks 统一强制填 "FULL TIME TO COUNT"。`;
+                       1. NOR递交（单点事件）：rate留空，remarks 强制填 "VESSEL ARRIVED & NOR TENDERED"。
+                       2. 移泊动作：只要该行描述中包含 "PILOT", "PROCEED", "FIRST LINE", "ALL FAST", "MAKE FAST" 任意一个词，rate 填 "0%"，remarks 强制填 "SHIFTING N/C"。（注：即使移泊跨越多行，你也逐行打上 SHIFTING N/C 的标签，不要自己合并）。
+                       3. 初水尺：包含 "INITIAL DRAFT"。rate 填 "0%"，remarks 强制填 "DRAFT SURVEY N/C"。
+                       4. 开始卸货（单点事件）：包含 "COMMENCED" 的卸货动作。rate留空，remarks 强制填 "COMMENCED DISCHG"。
+                       5. 卸货完成（单点事件，这是最后一条数据！）：包含完货动作。rate留空，remarks 强制填 "COMPLETED DISCHG"。
+                       6. 其他时间（兜底）：除了上述 1 到 5 的特殊动作，完货前的其余所有等待或作业（包括等待靠泊、检疫、海关、准备卸货等），照抄起止时间，rate 填 "100%"，remarks 统一强制填 "FULL TIME TO COUNT"。`;
+					   
        
                        // 3. 调用我们自己写的 Vercel 后端接口
                        const response = await fetch('/api/get-laytime', {
