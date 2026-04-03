@@ -230,33 +230,36 @@
        
                        // 2. 组装终极 Prompt (这里是你之前确认过的卸港规则)
                        // 要求千问包在一层 { "data": [...] } 里，方便 JSON 解析
-                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。当前任务：逐行提取 SOF 图片中的时间线并打标签。
+                       const systemPrompt = `你是一个无情的 OCR 数据提取机器。当前任务：将 SOF 图片中的表格逐行转换为 JSON 数组。
+                       
+                       🚨【最高优先级要求：绝对禁止合并或遗漏任何行！】🚨
+                       原图表格中有几行数据，你的 JSON 数组里就必须有多少个对象！
+                       严格按照从上到下的顺序，逐行照抄 FROM 和 TO 的时间。绝不允许把多行合并成一行！
+                       
+                       【打标签规则（按优先级顺序，满足第一条就不看后面的）：】
+                       请仔细阅读该行 DESCRIPTION 里的文字，根据以下优先级替换标签：
+                       
+                       1. 包含 "N.O.R" 或 "NOR"：必定是递交 NOR（注意：即使里面有 PILOT 等词，只要有 NOR 也是这条规则优先！）。rate填""，remarks强制填"VESSEL ARRIVED & NOR TENDERED"。
+                       2. 包含 "DISCHARGING" 且包含 "COMPLETED"：rate填"100%"，remarks强制填"COMPLETED DISCHG"。【注意：提取完这一行后，立即停止整个任务，绝不提取后续的任何行！】
+                       3. 包含 "COMMENCED" 且包含 "DISCHARGING"：rate填"100%"，remarks强制填"COMMENCED DISCHG"。
+                       4. 包含 "INITIAL DRAFT"：rate填"0%"，remarks强制填"DRAFT SURVEY N/C"。
+                       5. 包含 "PILOT", "PROCEED", "FIRST LINE", "ALL FAST", "MAKE FAST" 任意一个：rate填"0%"，remarks强制填"SHIFTING N/C"。
+                       6. 如果以上 1 到 5 的词汇都不包含（例如图上的等待靠泊 WAITED FOR BERTHING, 检疫 QUARANTINE, 办手续 FORMALITIES, 准备卸货 PREPARE 等等）：照抄起止时间，rate填"100%"，remarks统一强制填"FULL TIME TO COUNT"。
                        
                        【输出规范】
                        必须且只能输出包含 data 键的 JSON 对象：
                        {
                          "data": [
                            {
-                             "date": "月/日",
-                             "from": "M/D HH:MM",
-                             "to": "M/D HH:MM",
-                             "rate": "0%或100%",
+                             "date": "月/日 (如 4/14)",
+                             "from": "M/D HH:MM (照抄原图，如果没有就留空)",
+                             "to": "M/D HH:MM (照抄原图，如果没有就留空)",
+                             "rate": "按规则输出",
                              "used": "",
-                             "remarks": "标准描述"
+                             "remarks": "按规则输出的标准描述"
                            }
                          ]
-                       }
-                       
-                       【逐行无脑提取规则（最重要指令！）】
-                       请老老实实照抄原图每一行的 from 和 to 时间！绝对不要自己省略或合并时间段！
-                       然后，根据该行原本的描述（DESCRIPTION）中包含的英文关键词，强制替换对应的 rate 和 remarks：
-                       
-                       1. 只要包含 "NOR" -> rate留空，remarks填 "VESSEL ARRIVED & NOR TENDERED"
-                       2. 只要包含 "PILOT", "PROCEED", "FIRST LINE", "ALL FAST", "MAKE FAST" 之一 -> rate填"0%"，remarks填 "SHIFTING N/C"
-                       3. 只要包含 "INITIAL DRAFT" -> rate填"0%"，remarks填 "DRAFT SURVEY N/C"
-                       4. 只要包含 "DISCHARGING" 且包含 "COMMENCED" -> rate填"100%"，remarks填 "COMMENCED DISCHG"
-                       5. 只要包含 "DISCHARGING" 且包含 "COMPLETED" -> rate填"100%"，remarks填 "COMPLETED DISCHG"
-                       6. 其他兜底（没有上述关键词的行） -> rate填"100%"，remarks填 "FULL TIME TO COUNT"`;
+                       }`;
 					   
        
                        // 3. 调用我们自己写的 Vercel 后端接口
