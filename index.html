@@ -164,26 +164,43 @@
        
                        // 2. 组装终极 Prompt (这里是你之前确认过的卸港规则)
                        // 要求千问包在一层 { "data": [...] } 里，方便 JSON 解析
-                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。当前任务：读取【卸货港】的 SOF 图片，严格按照以下优先级规则提取时间线，并输出规范的 JSON 格式。
-       必须且只能输出包含 data 键的 JSON 对象，格式如下：
-       {
-         "data": [
-           {
-             "date": "月/日 (如 4/14)",
-             "from": "M/D HH:MM",
-             "to": "M/D HH:MM",
-             "rate": "0%或100%",
-             "used": "",
-             "remarks": "标准动作描述"
-           }
-         ]
-       }
-       
-       【业务处理规则】
-       1. 移泊合并：触发开启 "PILOT ON BOARD","ANCHOR AWEIGH"。触发关闭 "ALL FAST","FIRST LINE"。rate:"0%", remarks:"SHIFTING N/C"。
-       2. 初水尺：包含 "INITIAL DRAFT SURVEY"。rate:"0%", remarks:"DRAFT SURVEY N/C"。
-       3. 坏天气：包含 "bad weather"或"rain"。rate:"0%", remarks:"BAD WEATHER N/C"。
-       4. 兜底规则：提取 NOR 递交时间，rate:"", remarks:"VESSEL ARRIVED & NOR TENDERED"；提取卸货开始和结束。未覆盖时间rate默认"100%"。`;
+                       const systemPrompt = `你是一个专业的国际航运 Laytime 结算专家。当前任务：读取【卸货港】的 SOF (Statement of Facts) 图片，严格按照以下优先级规则提取时间线，并输出规范的 JSON 格式。
+                       
+                       【输出规范】
+                       必须且只能输出包含 data 键的 JSON 对象，格式如下：
+                       {
+                         "data": [
+                           {
+                             "date": "月/日 (如 4/14)",
+                             "from": "M/D HH:MM",
+                             "to": "M/D HH:MM (如果是单点事件，to 可与 from 相同或为空)",
+                             "rate": "按规则输出 0% 或 100%",
+                             "used": "强制留空，不作计算",
+                             "remarks": "按规则输出的标准动作描述"
+                           }
+                         ]
+                       }
+                       
+                       【业务处理规则（按优先级从高到低严格执行）】
+                       
+                       规则 A：移泊时间合并 (SHIFTING)
+                       - 触发开启：读取到包含 "PILOT ON BOARD", "ANCHOR AWEIGH" 或 "PROCEED" 等词汇。
+                       - 触发关闭：忽略中间所有检疫、海关、带缆动作，直到读取到 "ALL FAST", "MAKE FAST" 或 "FIRST LINE"。
+                       - 输出要求：提取这整个时间段。rate: "0%", used: "", remarks: "SHIFTING N/C"。
+                       
+                       规则 B：初水尺时间 (INITIAL DRAFT SURVEY)
+                       - 触发条件：动作描述中包含 "INITIAL DRAFT SURVEY" 或 "INITIAL DRAFT"。
+                       - 输出要求：提取该动作完整的开始(from)和结束(to)时间。rate: "0%", used: "", remarks: "DRAFT SURVEY N/C"。
+                       
+                       规则 C：坏天气时间 (BAD WEATHER)
+                       - 触发条件：因天气原因导致的停工，描述包含 "bad weather" 或 "rain"。
+                       - 输出要求：提取完整的开始和结束时间。rate: "0%", used: "", remarks: "BAD WEATHER N/C"。
+                       
+                       常规动作与默认补全 (兜底规则)
+                       - 递交 NOR：提取该单点时间，rate为空，remarks 强制输出: "VESSEL ARRIVED & NOR TENDERED"（注意：这是供系统触发后续逻辑的关键锚点，必须准确提取）。
+                       - 开始卸货：遇到开始卸货的描述，remarks 强制输出: "COMMENCED DISCHG"。
+                       - 卸货完成：遇到完货描述 ("COMPLETED" 等)，remarks 强制输出: "COMPLETED DISCHG"。
+                       - 其他常规作业时间：未被上述规则 A/B/C 覆盖的正常作业时间，rate 默认标记为 "100%"。`;
        
                        // 3. 调用我们自己写的 Vercel 后端接口
                        const response = await fetch('/api/get-laytime', {
