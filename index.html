@@ -1,77 +1,427 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>iOS Safari 点击测试</title>
-  <style>
-    body {
-      margin: 0;
-      padding: 20px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0A0814;
-      color: white;
-      min-height: 100vh;
-      touch-action: manipulation;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .btn {
-      touch-action: manipulation;
-      -webkit-tap-highlight-color: transparent;
-      pointer-events: auto;
-    }
-    .card {
-      background: #1a1822;
-      border-radius: 24px;
-      padding: 24px;
-      margin-bottom: 24px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-    }
-    button {
-      width: 100%;
-      padding: 18px;
-      font-size: 18px;
-      border-radius: 16px;
-      border: none;
-      background: #7e22ff;
-      color: white;
-      margin-top: 12px;
-      font-weight: bold;
-    }
-    .test-btn {
-      padding: 16px 24px;
-      font-size: 17px;
-      border-radius: 9999px;
-      background: #1a1822;
-      border: 2px solid #ffffff20;
-      margin: 8px;
-    }
-  </style>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>现代多图拼接与排序工具</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg: #f3f4f6;
+            --surface: #ffffff;
+            --text-main: #1f2937;
+            --text-muted: #6b7280;
+            --border: #e5e7eb;
+            --radius: 12px;
+            --danger: #ef4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            background: var(--surface);
+            max-width: 900px;
+            width: 100%;
+            padding: 30px;
+            border-radius: var(--radius);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        h2 { text-align: center; margin-bottom: 30px; font-weight: 600; color: var(--text-main); }
+
+        .upload-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            text-align: center;
+            cursor: grab; /* 提示用户可拖拽 */
+            transition: all 0.2s ease;
+            position: relative;
+            background-color: #fafafa;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 180px;
+            user-select: none; /* 防止拖拽时选中文本 */
+        }
+
+        .drop-zone:active { cursor: grabbing; }
+
+        /* 上传文件时的悬浮反馈 */
+        .drop-zone.dragover { border-color: var(--primary); background-color: #eef2ff; }
+        
+        /* 内部拖拽排序时的悬浮反馈 */
+        .drop-zone.dragover-reorder { border-color: var(--primary); border-style: solid; transform: scale(1.02); background-color: #f5f3ff; box-shadow: 0 4px 10px rgba(79, 70, 229, 0.15); z-index: 10; }
+
+        .drop-zone p { color: var(--text-muted); margin-top: 10px; font-size: 14px; line-height: 1.5; }
+        .drop-zone input[type="file"] { display: none; }
+        
+        .thumb-preview {
+            max-width: 100%;
+            max-height: 120px;
+            border-radius: 6px;
+            display: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            pointer-events: none; /* 防止浏览器默认拖拽图片本身 */
+        }
+
+        .delete-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--danger);
+            border: 1px solid var(--border);
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            font-size: 12px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 5;
+        }
+        .delete-btn:hover { background: var(--danger); color: white; }
+        .drop-zone.has-file .delete-btn { display: flex; }
+
+        .add-more-btn {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            background-color: transparent;
+            color: var(--primary);
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 180px;
+            transition: all 0.3s ease;
+        }
+        .add-more-btn:hover { background-color: #f5f3ff; border-color: var(--primary); }
+
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 30px;
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+        }
+
+        .control-group { display: flex; flex-direction: column; gap: 8px; }
+        label { font-size: 14px; font-weight: 500; }
+        
+        select, input[type="number"] {
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        select:focus, input[type="number"]:focus { border-color: var(--primary); }
+
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            width: 100%;
+            transition: background-color 0.2s;
+        }
+        .btn:hover { background-color: var(--primary-hover); }
+
+        .result-area { text-align: center; margin-top: 30px; display: none; }
+        .result-area h3 { margin-bottom: 15px; font-size: 18px; }
+        #finalPreview { max-width: 100%; border-radius: var(--radius); box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; border: 1px solid var(--border); }
+        .btn-download { background-color: #10b981; text-decoration: none; display: inline-block; padding: 12px 24px; border-radius: 8px; color: white; font-weight: 500;}
+        .btn-download:hover { background-color: #059669; }
+
+        @media (max-width: 600px) {
+            .controls { grid-template-columns: 1fr; }
+        }
+    </style>
 </head>
 <body>
 
-  <h1 style="text-align:center; margin-bottom:30px; font-size:24px;">🔬 iOS Safari 纯 HTML 测试页</h1>
+<div class="container">
+    <h2>✨ 多图拼接与排序工具</h2>
 
-  <div class="card">
-    <p style="margin-bottom:12px; color:#aaa;">1. 方向切换（测试）</p>
-    <div style="display:flex; background:#11101a; border-radius:9999px; padding:4px;">
-      <button onclick="alert('✅ 垂直按钮点击成功！')" class="test-btn" style="flex:1;">⬇️ 上下垂直</button>
-      <button onclick="alert('✅ 水平按钮点击成功！')" class="test-btn" style="flex:1;">➡️ 左右水平</button>
+    <div class="upload-grid" id="uploadContainer">
+        <button class="add-more-btn" onclick="addUploadZone()" id="addBtn">➕ 添加图片</button>
     </div>
-  </div>
 
-  <div class="card">
-    <p style="margin-bottom:12px; color:#aaa;">2. 其他按钮测试</p>
-    <button onclick="alert('✅ 生成拼接图片按钮点击成功！')">生成拼接图片</button>
-    <button onclick="alert('✅ 添加图片按钮点击成功！')" style="background:#333; margin-top:12px;">+ 添加图片</button>
-    <button onclick="alert('✅ 清除结果按钮点击成功！')" style="background:#333; margin-top:12px;">清除结果</button>
-  </div>
+    <div class="controls">
+        <div class="control-group">
+            <label>拼接方向</label>
+            <select id="direction">
+                <option value="vertical">⬇️ 上下拼接 (垂直)</option>
+                <option value="horizontal">➡️ 左右拼接 (水平)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>分辨率设置</label>
+            <select id="resMode">
+                <option value="original">保持原图尺寸 (100%)</option>
+                <option value="0.5">缩小 50%</option>
+                <option value="0.25">缩小 25%</option>
+                <option value="custom">自定义最大宽度/高度</option>
+            </select>
+            <input type="number" id="customSize" placeholder="输入像素(px)" style="display:none; margin-top: 8px;">
+        </div>
+    </div>
 
-  <p style="text-align:center; margin-top:40px; color:#666; font-size:13px;">
-    如果你能看到弹窗，说明你的 iPhone Safari 本身是正常的。<br>
-    问题出在 Next.js 项目里。<br><br>
-    请把测试结果告诉我：
-  </p>
+    <button class="btn" onclick="processImages()">生成拼接图片</button>
 
+    <div class="result-area" id="resultArea">
+        <h3>预览结果</h3>
+        <img id="finalPreview" alt="拼接结果">
+        <br>
+        <a id="downloadBtn" class="btn-download">保存到本地</a>
+    </div>
+</div>
+
+<script>
+    let zoneCounter = 0;
+    const uploadContainer = document.getElementById('uploadContainer');
+    const addMoreBtn = document.getElementById('addBtn');
+    
+    // 记录当前正在拖拽排序的元素
+    let draggedZone = null;
+
+    // --- 1. 动态添加上传区域 ---
+    function addUploadZone() {
+        zoneCounter++;
+        const zoneId = `zone${zoneCounter}`;
+        
+        const zoneDiv = document.createElement('div');
+        zoneDiv.className = 'drop-zone';
+        zoneDiv.id = zoneId;
+        zoneDiv.setAttribute('draggable', 'true'); // 开启拖拽支持
+        
+        zoneDiv.innerHTML = `
+            <button class="delete-btn" onclick="removeZone(event, '${zoneId}')">✕</button>
+            <input type="file" class="img-input" accept="image/*">
+            <img class="thumb-preview" draggable="false">
+            <div class="upload-text">
+                <div style="font-size: 24px;">📁</div>
+                <p>点击/拖入文件<br><small style="font-size:12px;opacity:0.7;">(长按可拖拽排序)</small></p>
+            </div>
+        `;
+
+        uploadContainer.insertBefore(zoneDiv, addMoreBtn);
+        setupDropZone(zoneDiv);
+    }
+
+    // 删除指定的上传区域
+    function removeZone(event, zoneId) {
+        event.stopPropagation();
+        const zone = document.getElementById(zoneId);
+        if (zone) zone.remove();
+    }
+
+    // 初始化两个框
+    addUploadZone();
+    addUploadZone();
+
+    // --- 2. 混合拖拽逻辑 (文件上传 + DOM排序) ---
+    function setupDropZone(zone) {
+        const input = zone.querySelector('.img-input');
+        const thumb = zone.querySelector('.thumb-preview');
+        const text = zone.querySelector('.upload-text');
+
+        // 点击上传触发
+        zone.addEventListener('click', (e) => {
+            if (e.target !== input && !e.target.classList.contains('delete-btn')) {
+                input.click();
+            }
+        });
+
+        input.addEventListener('change', () => {
+            if (input.files.length > 0) showThumbnail(input.files[0], thumb, text, zone);
+        });
+
+        // ----- 排序拖拽事件 -----
+        zone.addEventListener('dragstart', (e) => {
+            draggedZone = zone;
+            setTimeout(() => zone.style.opacity = '0.4', 0); // 视觉变浅
+            e.dataTransfer.effectAllowed = 'move';
+        });
+
+        zone.addEventListener('dragend', () => {
+            draggedZone = null;
+            zone.style.opacity = '1';
+            document.querySelectorAll('.drop-zone').forEach(z => z.classList.remove('dragover-reorder', 'dragover'));
+        });
+
+        // ----- 悬浮与放下事件 -----
+        zone.addEventListener('dragover', (e) => {
+            e.preventDefault(); // 必须阻止默认行为才能触发 drop
+            
+            if (draggedZone && draggedZone !== zone) {
+                // 网页内部排序拖拽
+                zone.classList.add('dragover-reorder');
+            } else if (!draggedZone) {
+                // 从电脑外部拖文件进来
+                zone.classList.add('dragover');
+            }
+        });
+
+        zone.addEventListener('dragleave', () => {
+            zone.classList.remove('dragover', 'dragover-reorder');
+        });
+
+        zone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            zone.classList.remove('dragover', 'dragover-reorder');
+
+            if (draggedZone) {
+                // 1. 处理内部拖拽排序逻辑
+                if (draggedZone !== zone) {
+                    const allZones = Array.from(uploadContainer.querySelectorAll('.drop-zone'));
+                    const draggedIndex = allZones.indexOf(draggedZone);
+                    const targetIndex = allZones.indexOf(zone);
+
+                    // 动态更新 DOM 节点的位置
+                    if (draggedIndex < targetIndex) {
+                        uploadContainer.insertBefore(draggedZone, zone.nextSibling);
+                    } else {
+                        uploadContainer.insertBefore(draggedZone, zone);
+                    }
+                }
+            } else {
+                // 2. 处理外部拖入文件逻辑
+                if (e.dataTransfer.files.length > 0) {
+                    input.files = e.dataTransfer.files;
+                    showThumbnail(input.files[0], thumb, text, zone);
+                }
+            }
+        });
+    }
+
+    function showThumbnail(file, thumbEl, textEl, zoneEl) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            thumbEl.src = e.target.result;
+            thumbEl.style.display = 'block';
+            textEl.style.display = 'none';
+            zoneEl.classList.add('has-file');
+        };
+        reader.readAsDataURL(file);
+    }
+
+    // --- 3. 控制面板交互 ---
+    document.getElementById('resMode').addEventListener('change', function() {
+        document.getElementById('customSize').style.display = (this.value === 'custom') ? 'block' : 'none';
+    });
+
+    // --- 4. 核心拼接逻辑 ---
+    async function processImages() {
+        // 注意：这里获取 input 的顺序就是 DOM 排版的顺序！排序后这里会自动按新顺序提取图片
+        const inputs = Array.from(document.querySelectorAll('.img-input')).filter(input => input.files.length > 0);
+        
+        if (inputs.length === 0) {
+            alert("请至少上传一张图片！");
+            return;
+        }
+
+        const loadImage = (file) => new Promise((res) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => res(img);
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        const loadedImages = await Promise.all(inputs.map(input => loadImage(input.files[0])));
+        
+        const direction = document.getElementById('direction').value;
+        const mode = document.getElementById('resMode').value;
+
+        let origWidth = 0, origHeight = 0;
+        if (direction === 'vertical') {
+            origWidth = Math.max(...loadedImages.map(img => img.width));
+            origHeight = loadedImages.reduce((sum, img) => sum + img.height, 0);
+        } else {
+            origWidth = loadedImages.reduce((sum, img) => sum + img.width, 0);
+            origHeight = Math.max(...loadedImages.map(img => img.height));
+        }
+
+        let scale = 1;
+        if (mode === '0.5') scale = 0.5;
+        else if (mode === '0.25') scale = 0.25;
+        else if (mode === 'custom') {
+            const customVal = parseInt(document.getElementById('customSize').value);
+            if (customVal) {
+                scale = direction === 'vertical' ? (customVal / origWidth) : (customVal / origHeight);
+            }
+        }
+
+        const targetWidth = origWidth * scale;
+        const targetHeight = origHeight * scale;
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, targetWidth, targetHeight);
+
+        let currentX = 0, currentY = 0;
+
+        for (let img of loadedImages) {
+            if (direction === 'vertical') {
+                const x = (targetWidth - (img.width * scale)) / 2;
+                ctx.drawImage(img, x, currentY, img.width * scale, img.height * scale);
+                currentY += img.height * scale;
+            } else {
+                const y = (targetHeight - (img.height * scale)) / 2;
+                ctx.drawImage(img, currentX, y, img.width * scale, img.height * scale);
+                currentX += img.width * scale;
+            }
+        }
+
+        const dataUrl = canvas.toDataURL("image/png");
+        document.getElementById('finalPreview').src = dataUrl;
+        
+        const downloadBtn = document.getElementById('downloadBtn');
+        downloadBtn.href = dataUrl;
+        downloadBtn.download = `stitch_${new Date().getTime()}.png`;
+        downloadBtn.innerText = `保存图片 (${Math.round(targetWidth)}x${Math.round(targetHeight)})`;
+        
+        document.getElementById('resultArea').style.display = 'block';
+    }
+</script>
 </body>
 </html>
